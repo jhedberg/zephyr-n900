@@ -47,6 +47,8 @@ LOG_MODULE_REGISTER(tsc2005, CONFIG_INPUT_LOG_LEVEL);
 #define CFR1_INIT 0x0003U
 /* Median of 15 then average of 7, on X, Y and Z */
 #define CFR2_INIT 0x381CU
+/* CFR0 bits that read back as written */
+#define CFR0_RW_MASK 0x3FFFU
 
 #define MAX_12BIT 0xFFFU
 
@@ -66,6 +68,7 @@ struct tsc2005_config {
 	uint16_t min_y;
 	uint16_t max_y;
 	uint16_t max_pressure;
+	uint32_t esd_timeout_ms;
 };
 
 struct tsc2005_data {
@@ -73,6 +76,8 @@ struct tsc2005_data {
 	struct gpio_callback int_cb;
 	struct k_work sample_work;
 	struct k_work_delayable pen_up_work;
+	struct k_work_delayable esd_work;
+	int64_t last_valid;
 	uint16_t last[4];
 	bool pressed;
 };
@@ -181,6 +186,7 @@ static void sample_handler(struct k_work *work)
 		scale(y, config->min_y, config->max_y, config->common.screen_height), K_FOREVER);
 	input_report_key(dev, INPUT_BTN_TOUCH, 1, true, K_FOREVER);
 	data->pressed = true;
+	data->last_valid = k_uptime_get();
 
 	k_work_reschedule(&data->pen_up_work, PEN_UP_TIMEOUT);
 }
@@ -194,6 +200,87 @@ static void pen_up_handler(struct k_work *work)
 		data->pressed = false;
 		input_report_key(data->dev, INPUT_BTN_TOUCH, 0, true, K_FOREVER);
 	}
+}
+
+static int tsc2005_reset(const struct device *dev)
+{
+	const struct tsc2005_config *config = dev->config;
+	int ret;
+
+	if (config->reset_gpio.port == NULL) {
+		return 0;
+	}
+
+	ret = gpio_pin_set_dt(&config->reset_gpio, 1);
+	if (ret != 0) {
+		return ret;
+	}
+	k_busy_wait(RESET_PULSE_US);
+	ret = gpio_pin_set_dt(&config->reset_gpio, 0);
+	k_busy_wait(RESET_PULSE_US);
+
+	return ret;
+}
+
+static int tsc2005_start(const struct device *dev)
+{
+	const uint16_t cfr[][2] = {
+		{REG_CFR0, CFR0_INIT},
+		{REG_CFR1, CFR1_INIT},
+		{REG_CFR2, CFR2_INIT},
+	};
+	int ret;
+
+	for (size_t i = 0U; i < ARRAY_SIZE(cfr); i++) {
+		ret = tsc2005_reg_write(dev, cfr[i][0], cfr[i][1]);
+		if (ret != 0) {
+			return ret;
+		}
+	}
+
+	return tsc2005_cmd(dev, CMD_NORMAL);
+}
+
+/*
+ * An electrostatic discharge can reset the chip, which then stops sampling.
+ * Without valid samples for a while, check that CFR0 still holds what was
+ * written, and reset and configure the chip again if it does not.
+ */
+static void esd_handler(struct k_work *work)
+{
+	struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+	struct tsc2005_data *data = CONTAINER_OF(dwork, struct tsc2005_data, esd_work);
+	const struct device *dev = data->dev;
+	const struct tsc2005_config *config = dev->config;
+	uint16_t cfr0 = 0U;
+	int ret;
+
+	if ((k_uptime_get() - data->last_valid) < config->esd_timeout_ms) {
+		goto rearm;
+	}
+
+	ret = tsc2005_reg_read(dev, REG_CFR0, &cfr0);
+	if ((ret == 0) && (((cfr0 ^ CFR0_INIT) & CFR0_RW_MASK) == 0U)) {
+		goto rearm;
+	}
+
+	LOG_WRN("not responding (%d, CFR0 0x%04x), resetting", ret, cfr0);
+	(void)k_work_cancel_delayable(&data->pen_up_work);
+	if (data->pressed) {
+		data->pressed = false;
+		input_report_key(dev, INPUT_BTN_TOUCH, 0, true, K_FOREVER);
+	}
+
+	ret = tsc2005_reset(dev);
+	if (ret == 0) {
+		ret = tsc2005_start(dev);
+	}
+	if (ret != 0) {
+		LOG_ERR("reset failed (%d)", ret);
+	}
+
+rearm:
+	k_work_reschedule(&data->esd_work, K_MSEC(config->esd_timeout_ms));
 }
 
 static void int_handler(const struct device *port, struct gpio_callback *cb, uint32_t pins)
@@ -210,11 +297,6 @@ static int tsc2005_init(const struct device *dev)
 {
 	const struct tsc2005_config *config = dev->config;
 	struct tsc2005_data *data = dev->data;
-	const uint16_t cfr[][2] = {
-		{REG_CFR0, CFR0_INIT},
-		{REG_CFR1, CFR1_INIT},
-		{REG_CFR2, CFR2_INIT},
-	};
 	int ret;
 
 	if (!spi_is_ready_dt(&config->bus) || !gpio_is_ready_dt(&config->int_gpio)) {
@@ -226,21 +308,21 @@ static int tsc2005_init(const struct device *dev)
 			return -ENODEV;
 		}
 
-		ret = gpio_pin_configure_dt(&config->reset_gpio, GPIO_OUTPUT_ACTIVE);
+		ret = gpio_pin_configure_dt(&config->reset_gpio, GPIO_OUTPUT_INACTIVE);
 		if (ret != 0) {
 			return ret;
 		}
-		k_busy_wait(RESET_PULSE_US);
-		ret = gpio_pin_set_dt(&config->reset_gpio, 0);
-		if (ret != 0) {
-			return ret;
-		}
-		k_busy_wait(RESET_PULSE_US);
+	}
+
+	ret = tsc2005_reset(dev);
+	if (ret != 0) {
+		return ret;
 	}
 
 	data->dev = dev;
 	k_work_init(&data->sample_work, sample_handler);
 	k_work_init_delayable(&data->pen_up_work, pen_up_handler);
+	k_work_init_delayable(&data->esd_work, esd_handler);
 
 	ret = gpio_pin_configure_dt(&config->int_gpio, GPIO_INPUT);
 	if (ret != 0) {
@@ -258,15 +340,18 @@ static int tsc2005_init(const struct device *dev)
 		return ret;
 	}
 
-	for (size_t i = 0U; i < ARRAY_SIZE(cfr); i++) {
-		ret = tsc2005_reg_write(dev, cfr[i][0], cfr[i][1]);
-		if (ret != 0) {
-			LOG_ERR("configuration failed (%d)", ret);
-			return ret;
-		}
+	ret = tsc2005_start(dev);
+	if (ret != 0) {
+		LOG_ERR("configuration failed (%d)", ret);
+		return ret;
 	}
 
-	return tsc2005_cmd(dev, CMD_NORMAL);
+	if (config->esd_timeout_ms > 0U) {
+		data->last_valid = k_uptime_get();
+		k_work_schedule(&data->esd_work, K_MSEC(config->esd_timeout_ms));
+	}
+
+	return 0;
 }
 
 #define TSC2005_INIT(inst)                                                                         \
@@ -286,6 +371,7 @@ static int tsc2005_init(const struct device *dev)
 		.min_y = DT_INST_PROP(inst, min_y),                                                \
 		.max_y = DT_INST_PROP(inst, max_y),                                                \
 		.max_pressure = DT_INST_PROP(inst, max_pressure),                                  \
+		.esd_timeout_ms = DT_INST_PROP(inst, ti_esd_recovery_timeout_ms),                  \
 	};                                                                                         \
 	static struct tsc2005_data tsc2005_data_##inst;                                            \
 	DEVICE_DT_INST_DEFINE(inst, tsc2005_init, NULL, &tsc2005_data_##inst,                      \
