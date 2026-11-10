@@ -1,5 +1,6 @@
 /*
  * Copyright The Zephyr Project Contributors
+ * Copyright (c) 2026 Silicon Laboratories Inc.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -20,6 +21,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/byteorder.h>
+
+#include <string.h>
 
 LOG_MODULE_REGISTER(tsc2005, CONFIG_INPUT_LOG_LEVEL);
 
@@ -70,6 +73,7 @@ struct tsc2005_data {
 	struct gpio_callback int_cb;
 	struct k_work sample_work;
 	struct k_work_delayable pen_up_work;
+	uint16_t last[4];
 	bool pressed;
 };
 
@@ -154,6 +158,16 @@ static void sample_handler(struct k_work *work)
 	if ((x > MAX_12BIT) || (y > MAX_12BIT) || (z1 == 0U) || (z2 > MAX_12BIT) || (z1 >= z2)) {
 		return;
 	}
+
+	/*
+	 * At pen down the registers can still hold the samples from before the
+	 * last pen up, which would press wherever the previous touch was.
+	 */
+	if (!data->pressed && (memcmp(sample, data->last, sizeof(sample)) == 0)) {
+		LOG_DBG("stale sample");
+		return;
+	}
+	memcpy(data->last, sample, sizeof(sample));
 
 	/* Touch resistance, equation 1 of the datasheet */
 	pressure = (uint32_t)x * (z2 - z1) / z1;
