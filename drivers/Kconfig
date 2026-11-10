@@ -1,10 +1,15 @@
 # Copyright The Zephyr Project Contributors
+# Copyright (c) 2026 Silicon Laboratories Inc.
 # SPDX-License-Identifier: Apache-2.0
 
 menu "Nokia N900 and TI OMAP3 drivers"
 
 if AUDIO_CODEC
 rsource "audio/Kconfig.tlv320aic3x"
+endif
+
+if BT_HCI
+rsource "bluetooth/Kconfig.nokia_h4p"
 endif
 
 if CHARGER

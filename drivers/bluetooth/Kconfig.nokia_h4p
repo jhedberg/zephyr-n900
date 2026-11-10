@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Silicon Laboratories Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+config BT_NOKIA_H4P
+	bool "Nokia H4+ HCI driver"
+	default y
+	depends on DT_HAS_NOKIA_H4P_BLUETOOTH_ENABLED
+	select BT_UART
+	select UART_LINE_CTRL
+	select UART_NS16550_LINE_CTRL if UART_NS16550
+	select GPIO
+	select PINCTRL
+	select BT_HCI_SET_PUBLIC_ADDR
+	help
+	  HCI driver for the Bluetooth controllers of Nokia phones that speak
+	  Nokia's H4+ over a UART, such as the BCM2048 of the N900.
+
+if BT_NOKIA_H4P
+
+config BT_NOKIA_H4P_FIRMWARE
+	string "Firmware script"
+	help
+	  Absolute path to the firmware script that is sent to the controller
+	  before anything else, bcmfw.bin from Maemo for the BCM2048. The
+	  BCM2048 does not work as a controller without it. The script may not
+	  be redistributed, so it is not part of this repository.
+
+config BT_NOKIA_H4P_RX_STACK_SIZE
+	int "Receive thread stack size"
+	default 1024
+
+endif # BT_NOKIA_H4P
