@@ -185,6 +185,7 @@
 		min-y = <178>;
 		max-y = <3763>;
 		inverted-y;
+		ti,esd-recovery-timeout-ms = <8000>;
 		screen-width = <4096>;
 		screen-height = <4096>;
 		display = <&dispc>;
