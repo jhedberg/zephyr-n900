@@ -47,6 +47,16 @@ The phone and camera apps generate the camera sensor register tables at
 build time from a local Linux tree (`-DLINUX_DIR=...`, default `~/linux`);
 those tables are GPL-2.0 and are not part of this repository.
 
+`-DEXTRA_CONF_FILE=overlay-bt.conf` gives the phone demo a Bluetooth app:
+switching it on and off, visibility, discovery, pairing and the paired
+devices, and the device name, with an address derived from the OMAP die
+ID. It needs the BCM2048 firmware script in
+`CONFIG_BT_NOKIA_H4P_FIRMWARE` (the board documentation says where to get
+it) and Host support for controllers without LE
+(zephyrproject-rtos/zephyr#125120). Encrypted links also need
+`CONFIG_BT_BR_ALLOW_UNKNOWN_ENC_KEY_SIZE=y`
+(zephyrproject-rtos/zephyr#125213).
+
 The phone demo's Terminal app runs the Zephyr shell on the screen, in
 88 x 23 characters with the log in between, and stays in landscape. The
 arrow keys browse the history and move the cursor, the Sym/Ctrl key makes

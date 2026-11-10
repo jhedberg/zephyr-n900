@@ -1,4 +1,5 @@
 # Copyright The Zephyr Project Contributors
+# Copyright (c) 2026 Silicon Laboratories Inc.
 # SPDX-License-Identifier: Apache-2.0
 
 common:
@@ -10,3 +11,7 @@ common:
 tests:
   n900.apps.phone:
     tags: [n900, needs-linux]
+  n900.apps.phone.bluetooth:
+    tags: [n900, needs-linux, bluetooth]
+    extra_args:
+      - EXTRA_CONF_FILE=overlay-bt.conf
