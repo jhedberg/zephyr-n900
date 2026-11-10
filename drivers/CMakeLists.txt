@@ -1,7 +1,9 @@
 # Copyright The Zephyr Project Contributors
+# Copyright (c) 2026 Silicon Laboratories Inc.
 # SPDX-License-Identifier: Apache-2.0
 
 add_subdirectory_ifdef(CONFIG_AUDIO_CODEC audio)
+add_subdirectory_ifdef(CONFIG_BT_HCI bluetooth)
 add_subdirectory_ifdef(CONFIG_CHARGER charger)
 add_subdirectory_ifdef(CONFIG_DISPLAY display)
 add_subdirectory_ifdef(CONFIG_FUEL_GAUGE fuel_gauge)

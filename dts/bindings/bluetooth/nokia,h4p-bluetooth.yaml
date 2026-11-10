@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Silicon Laboratories Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Bluetooth controller of a Nokia phone behind a UART, speaking Nokia's H4+:
+  H4 with every frame padded to an even length, packets that negotiate the
+  UART speed and check the link, and wakeup lines in both directions.
+
+  The node is a child of its UART. The UART's current-speed is the speed
+  negotiated with the controller, which starts at 120000 baud.
+
+compatible: "nokia,h4p-bluetooth"
+
+include: [bt-hci.yaml, pinctrl-device.yaml]
+
+properties:
+  bt-hci-name:
+    default: "H4+"
+
+  bt-hci-bus:
+    default: "uart"
+
+  reset-gpios:
+    type: phandle-array
+    required: true
+    description: Reset line of the controller.
+
+  bluetooth-wakeup-gpios:
+    type: phandle-array
+    required: true
+    description: Line the host raises while it transmits, to wake the controller.
+
+  host-wakeup-gpios:
+    type: phandle-array
+    required: true
+    description: Line the controller raises while it has something to send.
+
+  clocks:
+    required: true
+    description: |
+      System clock of the controller, a fixed clock whose clock-frequency
+      is given to the controller during negotiation.
