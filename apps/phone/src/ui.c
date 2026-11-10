@@ -1,4 +1,5 @@
 /* N900 phone demo: LVGL user interface */
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -9,6 +10,7 @@
 #include <zephyr/version.h>
 #include <lvgl.h>
 
+#include "btui.h"
 #include "camera.h"
 #include "kites.h"
 #include "phone.h"
@@ -40,6 +42,7 @@ enum app_id {
 	APP_SENSORS,
 	APP_SETTINGS,
 	APP_TORCH,
+	APP_BLUETOOTH,
 	APP_TERMINAL,
 };
 
@@ -264,8 +267,9 @@ static void leds_update(void)
 
 static void bar_update(void)
 {
-	char buf[64];
+	char buf[80];
 	const char *batt;
+	const char *bt = "";
 	int soc = st.s.soc;
 
 	clock_text(buf, sizeof(buf), false);
@@ -276,7 +280,18 @@ static void bar_update(void)
 	       : (soc > 30) ? LV_SYMBOL_BATTERY_2
 	       : (soc > 10) ? LV_SYMBOL_BATTERY_1
 			    : LV_SYMBOL_BATTERY_EMPTY;
-	snprintf(buf, sizeof(buf), "%s%s%s%s %d%%", (st.unread > 0) ? LV_SYMBOL_ENVELOPE "  " : "",
+#if defined(CONFIG_BT)
+	struct btui_info bi;
+
+	btui_get_info(&bi);
+	if (bi.state == BTUI_ON) {
+		bt = bi.discovering		 ? LV_SYMBOL_BLUETOOTH LV_SYMBOL_REFRESH "  "
+		     : (bi.connections > 0U) ? LV_SYMBOL_BLUETOOTH LV_SYMBOL_OK "  "
+					     : LV_SYMBOL_BLUETOOTH "  ";
+	}
+#endif
+	snprintf(buf, sizeof(buf), "%s%s%s%s%s %d%%", bt,
+		 (st.unread > 0) ? LV_SYMBOL_ENVELOPE "  " : "",
 		 st.s.vbus ? LV_SYMBOL_USB "  " : "",
 		 (st.s.charger == CHARGER_STATUS_CHARGING) ? LV_SYMBOL_CHARGE " " : "", batt,
 		 st.s.gauge_ok ? soc : 0);
@@ -302,6 +317,9 @@ static const struct {
 	{APP_SENSORS, LV_SYMBOL_GPS, "Sensors", 0xD35400},
 	{APP_SETTINGS, LV_SYMBOL_SETTINGS, "Settings", 0x7F8C8D},
 	{APP_TORCH, LV_SYMBOL_EYE_OPEN, "Torch", 0xC0A000},
+#if defined(CONFIG_BT)
+	{APP_BLUETOOTH, LV_SYMBOL_BLUETOOTH, "Bluetooth", 0x1F5FBF},
+#endif
 	{APP_TERMINAL, ">_", "Terminal", 0x34495E},
 };
 
@@ -1805,10 +1823,462 @@ static void build_terminal(void)
 
 /* ---------- app switching ---------- */
 
+/* ---------- bluetooth ---------- */
+
+#if defined(CONFIG_BT)
+static lv_obj_t *bt_switch;
+static lv_obj_t *bt_state;
+static lv_obj_t *bt_visible;
+static lv_obj_t *bt_connectable;
+static lv_obj_t *bt_name;
+static lv_obj_t *bt_scan;
+static lv_obj_t *bt_list;
+static lv_obj_t *bt_dialog;
+/* Devices behind the list buttons, and the one the forget dialog is about */
+static struct btui_device bt_rows[BTUI_MAX_BONDS + BTUI_MAX_DEVICES];
+static struct btui_device bt_forget_dev;
+
+static const char *bt_cod_symbol(uint32_t cod)
+{
+	/* Major device class */
+	switch ((cod >> 8) & 0x1FU) {
+	case 1:
+		return LV_SYMBOL_DRIVE;
+	case 2:
+		return LV_SYMBOL_CALL;
+	case 3:
+		return LV_SYMBOL_WIFI;
+	case 4:
+		return LV_SYMBOL_AUDIO;
+	case 5:
+		return LV_SYMBOL_KEYBOARD;
+	case 6:
+		return LV_SYMBOL_IMAGE;
+	default:
+		return LV_SYMBOL_BLUETOOTH;
+	}
+}
+
+static void bt_dialog_close(void)
+{
+	if (bt_dialog != NULL) {
+		lv_msgbox_close_async(bt_dialog);
+		bt_dialog = NULL;
+	}
+}
+
+static void bt_dialog_show(const char *text)
+{
+	bt_dialog_close();
+	bt_dialog = lv_msgbox_create(NULL);
+	lv_obj_set_width(bt_dialog, PORTRAIT ? SCR_W - 40 : 560);
+	lv_msgbox_add_title(bt_dialog, LV_SYMBOL_BLUETOOTH "  Bluetooth");
+	lv_msgbox_add_text(bt_dialog, text);
+}
+
+static void bt_dialog_button(const char *text, bool yes, lv_event_cb_t cb)
+{
+	lv_obj_t *b = lv_msgbox_add_footer_button(bt_dialog, text);
+	lv_obj_t *footer = lv_msgbox_get_footer(bt_dialog);
+
+	/* Large enough for a fingertip, in a footer grown to fit them (its
+	 * default height is a third of LV_DPI_DEF) with a margin below.
+	 */
+	lv_obj_set_height(footer, LV_SIZE_CONTENT);
+	lv_obj_set_style_pad_top(footer, 8, 0);
+	lv_obj_set_style_pad_bottom(footer, 20, 0);
+	lv_obj_set_size(b, lv_pct(40), 80);
+	lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, (void *)(uintptr_t)yes);
+}
+
+static void bt_answer_cb(lv_event_t *e)
+{
+	bool yes = (uintptr_t)lv_event_get_user_data(e) != 0U;
+
+	bt_dialog_close();
+	btui_respond(yes);
+}
+
+static void bt_row_name(const struct btui_device *d, char *buf, size_t len)
+{
+	if (d->name[0] != '\0') {
+		snprintf(buf, len, "%s", d->name);
+	} else {
+		bt_addr_to_str(&d->addr, buf, len);
+	}
+}
+
+static void bt_forget_cb(lv_event_t *e)
+{
+	bool yes = (uintptr_t)lv_event_get_user_data(e) != 0U;
+
+	bt_dialog_close();
+	if (yes && (btui_forget(&bt_forget_dev.addr) != 0)) {
+		show_toast(LV_SYMBOL_WARNING "  Could not forget the device");
+	}
+}
+
+/* A paired device can be forgotten, a nearby one paired */
+static void bt_row_cb(lv_event_t *e)
+{
+	const struct btui_device *d = &bt_rows[(uintptr_t)lv_event_get_user_data(e)];
+	char name[BTUI_NAME_LEN];
+	char text[96];
+
+	bt_row_name(d, name, sizeof(name));
+	if (d->paired) {
+		bt_forget_dev = *d;
+		snprintf(text, sizeof(text),
+			 "Forget %s?\nIt has to be paired again to connect.", name);
+		bt_dialog_show(text);
+		bt_dialog_button("Forget", true, bt_forget_cb);
+		bt_dialog_button("Keep", false, bt_forget_cb);
+		return;
+	}
+
+	if (btui_pair(&d->addr) != 0) {
+		show_toast(LV_SYMBOL_WARNING "  Could not start pairing");
+		return;
+	}
+	snprintf(text, sizeof(text), LV_SYMBOL_BLUETOOTH "  Pairing with %s", name);
+	show_toast(text);
+}
+
+static void bt_list_heading(const char *text)
+{
+	lv_obj_t *l = label(bt_list, &lv_font_montserrat_20, COL_ACCENT, text);
+
+	if (lv_obj_get_index(l) > 0) {
+		lv_obj_set_style_pad_top(l, 10, 0);
+	}
+}
+
+static void bt_list_text(const char *text)
+{
+	lv_obj_t *l = label(bt_list, &lv_font_montserrat_14, COL_DIM, text);
+
+	lv_obj_set_style_pad_left(l, 12, 0);
+}
+
+static void bt_list_row(const struct btui_device *d, const char *text, size_t row)
+{
+	lv_obj_t *b = button(bt_list, "", lv_color_hex(0x2C3E50), bt_row_cb, (void *)row);
+	lv_obj_t *l = lv_obj_get_child(b, 0);
+
+	bt_rows[row] = *d;
+	lv_obj_set_width(b, lv_pct(100));
+	lv_label_set_text_fmt(l, "%s  %s", bt_cod_symbol(d->cod), text);
+	lv_obj_align(l, LV_ALIGN_LEFT_MID, 0, 0);
+}
+
+static void bt_list_fill(void)
+{
+	struct btui_device found[BTUI_MAX_DEVICES];
+	struct btui_device bonds[BTUI_MAX_BONDS];
+	size_t nb = btui_get_bonds(bonds, ARRAY_SIZE(bonds));
+	size_t nf = btui_get_devices(found, ARRAY_SIZE(found));
+	size_t rows = 0;
+	char name[BTUI_NAME_LEN];
+	char text[BTUI_NAME_LEN + 16];
+
+	lv_obj_clean(bt_list);
+
+	bt_list_heading("Paired");
+	for (size_t i = 0; i < nb; i++) {
+		bt_row_name(&bonds[i], text, sizeof(text));
+		bt_list_row(&bonds[i], text, rows++);
+	}
+	if (nb == 0U) {
+		bt_list_text("None");
+	}
+
+	bt_list_heading("Nearby");
+	for (size_t i = 0; i < nf; i++) {
+		if (found[i].paired) {
+			continue;
+		}
+		bt_row_name(&found[i], name, sizeof(name));
+		snprintf(text, sizeof(text), "%s  (%d dBm)", name, found[i].rssi);
+		bt_list_row(&found[i], text, rows++);
+	}
+	if (rows == nb) {
+		struct btui_info bi;
+
+		btui_get_info(&bi);
+		bt_list_text(bi.discovering ? "Looking for devices..."
+					    : "Tap Scan to look for devices");
+	}
+}
+
+static void bt_set_state(lv_obj_t *w, lv_state_t state, bool on)
+{
+	if (on) {
+		lv_obj_add_state(w, state);
+	} else {
+		lv_obj_remove_state(w, state);
+	}
+}
+
+static void bt_screen_update(bool list)
+{
+	struct btui_info bi;
+	char addr[BT_ADDR_STR_LEN];
+	char buf[64];
+	bool on;
+
+	btui_get_info(&bi);
+	on = bi.state == BTUI_ON;
+
+	bt_set_state(bt_switch, LV_STATE_CHECKED, on || (bi.state == BTUI_STARTING));
+	bt_set_state(bt_visible, LV_STATE_CHECKED, bi.discoverable);
+	bt_set_state(bt_connectable, LV_STATE_CHECKED, bi.connectable);
+	bt_set_state(bt_visible, LV_STATE_DISABLED, !on);
+	bt_set_state(bt_connectable, LV_STATE_DISABLED, !on);
+	bt_set_state(bt_scan, LV_STATE_DISABLED, !on || bi.discovering);
+	lv_label_set_text(lv_obj_get_child(bt_scan, 0),
+			  bi.discovering ? "Scanning..." : LV_SYMBOL_REFRESH "  Scan");
+
+	switch (bi.state) {
+	case BTUI_STARTING:
+		lv_label_set_text(bt_state, "Starting...");
+		break;
+	case BTUI_ON:
+		bt_addr_to_str(&bi.addr, addr, sizeof(addr));
+		snprintf(buf, sizeof(buf), "On, %s\n%u connected", addr, bi.connections);
+		lv_label_set_text(bt_state, buf);
+		if (lv_textarea_get_text(bt_name)[0] == '\0') {
+			lv_textarea_set_text(bt_name, bi.name);
+		}
+		break;
+	case BTUI_FAILED:
+		snprintf(buf, sizeof(buf), "Failed to start (%d)", bi.err);
+		lv_label_set_text(bt_state, buf);
+		break;
+	default:
+		lv_label_set_text(bt_state, "Off");
+		break;
+	}
+
+	if (list) {
+		bt_list_fill();
+	}
+}
+
+static void bt_switch_cb(lv_event_t *e)
+{
+	bool on = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
+	int err = on ? btui_enable() : btui_disable();
+
+	if ((err != 0) && (err != -EALREADY)) {
+		show_toast(LV_SYMBOL_WARNING "  Bluetooth did not respond");
+	}
+	bt_screen_update(true);
+}
+
+static void bt_visible_cb(lv_event_t *e)
+{
+	bool on = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
+
+	if (btui_set_discoverable(on) != 0) {
+		show_toast(LV_SYMBOL_WARNING "  Could not change visibility");
+	}
+	bt_screen_update(false);
+}
+
+static void bt_connectable_cb(lv_event_t *e)
+{
+	bool on = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
+
+	if (btui_set_connectable(on) != 0) {
+		show_toast(LV_SYMBOL_WARNING "  Could not change connectability");
+	}
+	bt_screen_update(false);
+}
+
+static void bt_scan_cb(lv_event_t *e)
+{
+	if (btui_discover() != 0) {
+		show_toast(LV_SYMBOL_WARNING "  Could not start a scan");
+	}
+	bt_screen_update(true);
+}
+
+/* The name is typed on the hardware keyboard, Enter sets it */
+static void bt_name_char(char c)
+{
+	struct btui_info bi;
+
+	if (c == '\n') {
+		btui_get_info(&bi);
+		if (bi.state != BTUI_ON) {
+			show_toast(LV_SYMBOL_WARNING "  Turn Bluetooth on first");
+		} else if (btui_set_name(lv_textarea_get_text(bt_name)) == 0) {
+			show_toast(LV_SYMBOL_BLUETOOTH "  Name changed");
+		} else {
+			show_toast(LV_SYMBOL_WARNING "  Could not change the name");
+		}
+	} else if (c == '\b') {
+		lv_textarea_delete_char(bt_name);
+	} else {
+		lv_textarea_add_char(bt_name, c);
+	}
+	if (st.key_sounds) {
+		sound_play(SOUND_CLICK);
+	}
+}
+
+/* The arrow keys move the cursor, up and down to either end */
+static void bt_name_key(uint16_t code, bool pressed)
+{
+	if (!pressed) {
+		return;
+	}
+
+	switch (code) {
+	case INPUT_KEY_LEFT:
+		lv_textarea_cursor_left(bt_name);
+		break;
+	case INPUT_KEY_RIGHT:
+		lv_textarea_cursor_right(bt_name);
+		break;
+	case INPUT_KEY_UP:
+		lv_textarea_set_cursor_pos(bt_name, 0);
+		break;
+	case INPUT_KEY_DOWN:
+		lv_textarea_set_cursor_pos(bt_name, LV_TEXTAREA_CURSOR_LAST);
+		break;
+	default:
+		break;
+	}
+}
+
+static lv_obj_t *bt_switch_row(lv_obj_t *p, const char *name, int32_t y, lv_event_cb_t cb)
+{
+	lv_obj_t *w;
+
+	setting_row(p, name, y);
+	w = lv_switch_create(p);
+	lv_obj_align(w, LV_ALIGN_TOP_RIGHT, 0, y - 4);
+	lv_obj_add_event_cb(w, cb, LV_EVENT_VALUE_CHANGED, NULL);
+	return w;
+}
+
+/* Settings on the left, devices on the right; stacked in portrait */
+static void build_bluetooth(void)
+{
+	int32_t avail = SCR_H - BAR_H - 24;
+	lv_obj_t *left = panel(content, PORTRAIT ? SCR_W - 24 : 330, PORTRAIT ? 330 : avail);
+	lv_obj_t *right = panel(content, PORTRAIT ? SCR_W - 24 : SCR_W - 366,
+				PORTRAIT ? avail - 342 : avail);
+	lv_obj_t *w;
+
+	lv_obj_align(left, PORTRAIT ? LV_ALIGN_TOP_MID : LV_ALIGN_TOP_LEFT, PORTRAIT ? 0 : 12, 12);
+	lv_obj_align(right, PORTRAIT ? LV_ALIGN_BOTTOM_MID : LV_ALIGN_TOP_RIGHT,
+		     PORTRAIT ? 0 : -12, PORTRAIT ? -12 : 12);
+
+	bt_switch = bt_switch_row(left, "Bluetooth", 8, bt_switch_cb);
+	bt_state = label(left, &lv_font_montserrat_14, COL_DIM, "");
+	lv_obj_align(bt_state, LV_ALIGN_TOP_LEFT, 0, 44);
+	bt_visible = bt_switch_row(left, "Visible to others", 110, bt_visible_cb);
+	bt_connectable = bt_switch_row(left, "Connectable", 160, bt_connectable_cb);
+
+	setting_row(left, "Name", 214);
+	bt_name = lv_textarea_create(left);
+	lv_textarea_set_one_line(bt_name, true);
+	lv_textarea_set_max_length(bt_name, BTUI_NAME_LEN - 1);
+	lv_textarea_set_placeholder_text(bt_name, "Type, Enter sets it");
+	lv_obj_set_width(bt_name, lv_pct(100));
+	lv_obj_align(bt_name, LV_ALIGN_TOP_LEFT, 0, 244);
+	lv_obj_add_state(bt_name, LV_STATE_FOCUSED);
+
+	w = label(right, &lv_font_montserrat_20, COL_TEXT, "Devices");
+	lv_obj_align(w, LV_ALIGN_TOP_LEFT, 0, 8);
+	bt_scan = button(right, "", COL_ACCENT, bt_scan_cb, NULL);
+	lv_obj_set_size(bt_scan, 150, 44);
+	lv_obj_align(bt_scan, LV_ALIGN_TOP_RIGHT, 0, 0);
+
+	bt_list = lv_obj_create(right);
+	lv_obj_set_size(bt_list, lv_pct(100), (PORTRAIT ? avail - 342 : avail) - 80);
+	lv_obj_align(bt_list, LV_ALIGN_TOP_LEFT, 0, 56);
+	lv_obj_set_style_bg_opa(bt_list, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_border_width(bt_list, 0, 0);
+	lv_obj_set_style_pad_all(bt_list, 0, 0);
+	lv_obj_set_style_pad_row(bt_list, 6, 0);
+	lv_obj_set_flex_flow(bt_list, LV_FLEX_FLOW_COLUMN);
+
+	app_char = bt_name_char;
+	app_key = bt_name_key;
+	bt_screen_update(true);
+}
+
+/* Pairing dialogs show on any screen; the Bluetooth screen follows the state */
+static void bt_event(uint16_t code, int32_t value)
+{
+	char peer[BTUI_NAME_LEN];
+	char text[128];
+
+	switch (code) {
+	case BTUI_EV_STATE:
+		if (value != 0) {
+			snprintf(text, sizeof(text), LV_SYMBOL_WARNING "  Bluetooth failed (%d)",
+				 (int)value);
+			show_toast(text);
+		}
+		break;
+	case BTUI_EV_CONFIRM:
+		btui_pending_peer(peer, sizeof(peer));
+		if (value >= 0) {
+			snprintf(text, sizeof(text), "Pair with %s?\n\nIt should show %06d.", peer,
+				 (int)value);
+		} else {
+			snprintf(text, sizeof(text), "Pair with %s?", peer);
+		}
+		if (!st.screen_on) {
+			screen_set(true);
+		}
+		hw_vibrate(150);
+		bt_dialog_show(text);
+		bt_dialog_button("Pair", true, bt_answer_cb);
+		bt_dialog_button("Cancel", false, bt_answer_cb);
+		break;
+	case BTUI_EV_DISPLAY:
+		btui_pending_peer(peer, sizeof(peer));
+		snprintf(text, sizeof(text), "Type %06d on %s, then Enter.", (int)value, peer);
+		if (!st.screen_on) {
+			screen_set(true);
+		}
+		bt_dialog_show(text);
+		bt_dialog_button("Cancel", false, bt_answer_cb);
+		break;
+	case BTUI_EV_CANCEL:
+		bt_dialog_close();
+		break;
+	case BTUI_EV_PAIRED:
+		bt_dialog_close();
+		show_toast(LV_SYMBOL_BLUETOOTH "  Paired");
+		break;
+	case BTUI_EV_PAIR_FAILED:
+		bt_dialog_close();
+		snprintf(text, sizeof(text), LV_SYMBOL_WARNING "  Pairing failed (%d)", (int)value);
+		show_toast(text);
+		break;
+	default:
+		break;
+	}
+
+	bar_update();
+	if (st.app == APP_BLUETOOTH) {
+		bt_screen_update((code == BTUI_EV_STATE) || (code == BTUI_EV_DEVICES) ||
+				 (code == BTUI_EV_BONDS) || (code == BTUI_EV_DISCOVERY));
+	}
+}
+#endif /* CONFIG_BT */
+
 static void open_app(enum app_id app)
 {
-	static const char *const titles[] = {"Home",	"Phone",    "Messages", "Camera",
-					     "Sensors", "Settings", "Torch",	"Terminal"};
+	static const char *const titles[] = {"Home",	"Phone",    "Messages",	 "Camera",
+					     "Sensors", "Settings", "Torch",	 "Bluetooth",
+					     "Terminal"};
 
 	if ((st.app == APP_CAMERA) && (cam_timer != NULL)) {
 		camera_leave();
@@ -1841,6 +2311,11 @@ static void open_app(enum app_id app)
 		break;
 	case APP_SETTINGS:
 		build_settings();
+		break;
+	case APP_BLUETOOTH:
+#if defined(CONFIG_BT)
+		build_bluetooth();
+#endif
 		break;
 	case APP_TORCH:
 		build_torch();
@@ -2030,6 +2505,11 @@ void ui_event(const struct phone_event *e)
 			screen_set(true);
 		}
 		break;
+#if defined(CONFIG_BT)
+	case PEV_BT:
+		bt_event(e->code, e->value);
+		break;
+#endif
 	case PEV_USB:
 		if (e->value) {
 			sound_play(SOUND_CHARGER);
