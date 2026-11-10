@@ -1,5 +1,6 @@
 /*
  * Copyright The Zephyr Project Contributors
+ * Copyright (c) 2026 Silicon Laboratories Inc.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -34,6 +35,7 @@
 #define CORE_EN_SPI_ALL  GENMASK(21, 18)
 #define CORE_EN_HSOTGUSB BIT(4)
 #define CORE_EN_MCBSP1_5 (BIT(9) | BIT(10))
+#define CORE_EN_UART2    BIT(14)
 #define WKUP_EN_GPT1     BIT(0)
 #define WKUP_EN_GPIO1    BIT(3)
 #define WKUP_EN_WDT2     BIT(5)
@@ -165,6 +167,10 @@ void soc_early_init_hook(void)
 	clocks_enable(CM_FCLKEN1_CORE, CM_ICLKEN1_CORE, CM_IDLEST1_CORE, CORE_EN_SPI_ALL);
 	clocks_enable(CM_FCLKEN1_CORE, CM_ICLKEN1_CORE, CM_IDLEST1_CORE, CORE_EN_MCBSP1_5);
 	clocks_enable(CM_FCLKEN_PER, CM_ICLKEN_PER, CM_IDLEST_PER, PER_EN_MCBSP2_4);
+	/* UART2 goes to the Bluetooth controller */
+	if (DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(uart2))) {
+		clocks_enable(CM_FCLKEN1_CORE, CM_ICLKEN1_CORE, CM_IDLEST1_CORE, CORE_EN_UART2);
+	}
 	/* The USB controller has no functional clock; the ULPI PHY clocks it */
 	sys_set_bits(CM_ICLKEN1_CORE, CORE_EN_HSOTGUSB);
 
