@@ -75,6 +75,49 @@ The high-speed USB OTG controller with its ISP1707 PHY works as a USB device con
 (:kconfig:option:`CONFIG_UDC_OMAP3_MUSB`) under the label ``zephyr_udc0`` used by the USB device
 samples, for example :zephyr:code-sample:`usb-cdc-acm`.
 
+Bluetooth
+=========
+
+The Broadcom BCM2048 Bluetooth controller on UART2 speaks Nokia's H4+, which the
+:kconfig:option:`CONFIG_BT_NOKIA_H4P` driver implements: H4 with frames padded to an even length,
+negotiation and alive packets before any HCI traffic, and wakeup lines in both directions for the
+controller's sleep mode. The BCM2048 is a Bluetooth 2.1 + EDR controller without LE, so it needs a
+Host that supports controllers without LE.
+
+Until Nokia's firmware script has been sent to it, the controller's ROM answers the H4+ setup and
+HCI_Reset but no other command. The script is ``/lib/firmware/bcmfw.bin`` of Maemo's
+``bt-firmware`` package. Nokia's license allows neither modifying it nor distributing it for
+commercial purposes without their approval, so it is not part of this repository: set
+:kconfig:option:`CONFIG_BT_NOKIA_H4P_FIRMWARE` to the path of a copy to build it in. The link runs
+at 120000 baud, the controller's speed out of reset, as faster speeds need the UART's 13x mode.
+
+Any of these gives the script, 9560 bytes with the MD5 sum ``37db4bcf79fa7a85f1331c6df19115b9``:
+
+- The source of the Mer ``bcm-bt-firmware`` package on the Sailfish OS build service. Despite its
+  name, the archive is not compressed:
+
+  .. code-block:: console
+
+     curl -LO https://build.sailfishos.org/public/source/nemo:devel:hw:ti:omap3:n900/bcm-bt-firmware/bcm-bt-firmware-0.21rc3.tar.bz2
+     tar -xf bcm-bt-firmware-0.21rc3.tar.bz2
+     FW=$PWD/bcm-bt-firmware-0.21rc3/BCM2048B0_002.001.011.0190.0192.c.bin
+     west build -b n900 <app> -- -DCONFIG_BT_NOKIA_H4P_FIRMWARE=\"$FW\"
+
+- ``/lib/firmware/bcmfw.bin`` on a phone running Maemo.
+- A Maemo firmware image for the N900, such as
+  ``RX-51_2009SE_20.2010.36-2_PR_COMBINED_MR0_ARM.bin``: ``0xFFFF -M <image> -u <dir>`` unpacks its
+  root file system image, from which ``ubireader_extract_files`` of the ``ubi_reader`` Python
+  package extracts ``lib/firmware/bcmfw.bin``.
+
+The script gives the controller the placeholder address ``11:11:11:11:11:11``; a public identity
+created with :c:func:`bt_id_create` before :c:func:`bt_enable` replaces it. The controller does not
+support the HCI Read Encryption Key Size command, so the Host has to accept encrypted BR/EDR links
+with an unknown key size.
+
+With the console on USB (the ``cdc-acm-console`` snippet), enable
+:kconfig:option:`CONFIG_USBD_CDC_ACM_WORKQUEUE`: the Host initializes on the system workqueue,
+which otherwise also drains the console, and logging during the initialization then blocks it.
+
 Charging
 ========
 
