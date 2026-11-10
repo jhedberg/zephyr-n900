@@ -1,5 +1,6 @@
 /*
  * Copyright The Zephyr Project Contributors
+ * Copyright (c) 2026 Silicon Laboratories Inc.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -19,6 +20,14 @@
 	chosen {
 		zephyr,sram = &sdram0;
 		zephyr,display = &dispc;
+		zephyr,bt-hci = &bcm2048;
+	};
+
+	/* System clock of the Bluetooth controller, which switches it itself */
+	vctcxo: vctcxo {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <38400000>;
 	};
 
 	sdram0: memory@80000000 {
@@ -133,6 +142,27 @@
 
 	mcspi1_cs2_default: mcspi1_cs2_default {
 		pinmux = <OMAP3_PINMUX(0x21d2, PIN_OUTPUT, MUX_MODE_0)>;
+	};
+
+	uart2_cts_default: uart2_cts_default {
+		pinmux = <OMAP3_PINMUX(0x2174, PIN_INPUT_PULLUP, MUX_MODE_0)>;
+	};
+
+	uart2_rts_default: uart2_rts_default {
+		pinmux = <OMAP3_PINMUX(0x2176, PIN_OUTPUT, MUX_MODE_0)>;
+	};
+
+	uart2_tx_default: uart2_tx_default {
+		pinmux = <OMAP3_PINMUX(0x2178, PIN_OUTPUT, MUX_MODE_0)>;
+	};
+
+	uart2_rx_default: uart2_rx_default {
+		pinmux = <OMAP3_PINMUX(0x217a, PIN_INPUT, MUX_MODE_0)>;
+	};
+
+	/* GPIO 37 on gpmc_a4, set to GPIO here rather than left to the bootloader */
+	bt_wakeup_default: bt_wakeup_default {
+		pinmux = <OMAP3_PINMUX(0x2080, PIN_OUTPUT, MUX_MODE_4)>;
 	};
 };
 
@@ -339,6 +369,25 @@ zephyr_udc0: &usb_otg {
 	height = <480>;
 	memory-region = <&fb_mem>;
 	display-controller = <&panel>;
+};
+
+/* BCM2048 Bluetooth and FM radio, speaking Nokia's H4+ */
+&uart2 {
+	status = "okay";
+	/* The speed out of reset: faster needs the UART's 13x mode */
+	current-speed = <120000>;
+	pinctrl-0 = <&uart2_cts_default &uart2_rts_default &uart2_tx_default &uart2_rx_default>;
+	pinctrl-names = "default";
+
+	bcm2048: bluetooth {
+		compatible = "brcm,bcm2048-nokia", "nokia,h4p-bluetooth";
+		reset-gpios = <&gpio3 27 GPIO_ACTIVE_LOW>; /* GPIO 91 */
+		bluetooth-wakeup-gpios = <&gpio2 5 GPIO_ACTIVE_HIGH>; /* GPIO 37 */
+		host-wakeup-gpios = <&gpio4 5 GPIO_ACTIVE_HIGH>; /* GPIO 101 */
+		clocks = <&vctcxo>;
+		pinctrl-0 = <&bt_wakeup_default>;
+		pinctrl-names = "default";
+	};
 };
 
 /* Test pads under the battery, 1.8 V */
