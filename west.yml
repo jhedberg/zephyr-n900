@@ -1,4 +1,5 @@
 # Copyright The Zephyr Project Contributors
+# Copyright (c) 2026 Silicon Laboratories Inc.
 # SPDX-License-Identifier: Apache-2.0
 
 manifest:
@@ -15,3 +16,7 @@ manifest:
         name-allowlist:
           - cmsis # Cortex-A core headers
           - lvgl  # the phone demo UI
+          # PSA crypto for the Bluetooth host
+          - mbedtls
+          - tf-psa-crypto
+          - tf-psa-crypto-drivers
