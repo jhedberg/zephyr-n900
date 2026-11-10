@@ -1,4 +1,5 @@
 # Copyright The Zephyr Project Contributors
+# Copyright (c) 2026 Silicon Laboratories Inc.
 # SPDX-License-Identifier: Apache-2.0
 
 if SOC_SERIES_OMAP3
@@ -8,5 +9,10 @@ config NUM_IRQS
 
 config SYS_CLOCK_HW_CYCLES_PER_SEC
 	default $(dt_nodelabel_int_prop,gptimer1,clock-frequency)
+
+# The UARTs are those of the TI K3 SoCs: the mode register selects the UART
+# mode, which is disabled out of reset
+config UART_NS16550_TI_K3
+	default y
 
 endif # SOC_SERIES_OMAP3
