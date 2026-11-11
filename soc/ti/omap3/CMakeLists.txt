@@ -1,9 +1,10 @@
 # Copyright The Zephyr Project Contributors
+# Copyright (c) 2026 Silicon Laboratories Inc.
 # SPDX-License-Identifier: Apache-2.0
 
 zephyr_include_directories(.)
 
-zephyr_sources(soc.c entry.S)
+zephyr_sources(soc.c entry.S secure_call.S)
 zephyr_sources_ifdef(CONFIG_SOC_OMAP3_DSS_CONSOLE dss_console.c)
 zephyr_sources_ifdef(CONFIG_SOC_OMAP3_BOOT_STAGES boot_stage.c)
 
