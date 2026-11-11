@@ -21,6 +21,10 @@ rsource "display/Kconfig.acx565akm"
 rsource "display/Kconfig.ti_omap3_dispc"
 endif
 
+if ENTROPY_GENERATOR
+rsource "entropy/Kconfig.omap3_rom"
+endif
+
 if FUEL_GAUGE
 rsource "fuel_gauge/bq27200/Kconfig"
 endif

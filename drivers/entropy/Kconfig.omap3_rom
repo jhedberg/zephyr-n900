@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Silicon Laboratories Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+config ENTROPY_OMAP3_ROM
+	bool "TI OMAP3 secure ROM RNG driver"
+	default y
+	depends on DT_HAS_NOKIA_N900_ROM_RNG_ENABLED
+	depends on SOC_SERIES_OMAP3
+	select ENTROPY_HAS_DRIVER
+	select CACHE_MANAGEMENT
+	help
+	  Enable the driver for the hardware random number generator of TI
+	  OMAP3 SoCs in high-security devices such as the Nokia N900, where
+	  only the secure world has access to the RNG module and random
+	  numbers come from a service of the secure ROM code.

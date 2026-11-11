@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Silicon Laboratories Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Hardware random number generator of the TI OMAP3 in the Nokia N900. The
+  N900 is a high-security device: only the secure world has access to the
+  RNG module, and random numbers come from a service of the secure ROM code.
+
+compatible: "nokia,n900-rom-rng"
+
+include: base.yaml
