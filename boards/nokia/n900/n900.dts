@@ -164,6 +164,32 @@
 	bt_wakeup_default: bt_wakeup_default {
 		pinmux = <OMAP3_PINMUX(0x2080, PIN_OUTPUT, MUX_MODE_4)>;
 	};
+
+	mcspi4_clk_default: mcspi4_clk_default {
+		pinmux = <OMAP3_PINMUX(0x218c, PIN_INPUT_PULLDOWN, MUX_MODE_1)>;
+	};
+
+	mcspi4_simo_default: mcspi4_simo_default {
+		pinmux = <OMAP3_PINMUX(0x2190, PIN_OUTPUT, MUX_MODE_1)>;
+	};
+
+	mcspi4_somi_default: mcspi4_somi_default {
+		pinmux = <OMAP3_PINMUX(0x2192, PIN_INPUT_PULLDOWN, MUX_MODE_1)>;
+	};
+
+	mcspi4_cs0_default: mcspi4_cs0_default {
+		pinmux = <OMAP3_PINMUX(0x2196, PIN_OUTPUT, MUX_MODE_1)>;
+	};
+
+	/* GPIO 87 */
+	wlan_power_default: wlan_power_default {
+		pinmux = <OMAP3_PINMUX(0x20fe, PIN_OUTPUT, MUX_MODE_4)>;
+	};
+
+	/* GPIO 42 */
+	wlan_irq_default: wlan_irq_default {
+		pinmux = <OMAP3_PINMUX(0x208a, PIN_INPUT, MUX_MODE_4)>;
+	};
 };
 
 &mcspi1 {
@@ -195,6 +221,24 @@
 		compatible = "sony,acx565akm";
 		reg = <2>;
 		spi-max-frequency = <DT_FREQ_M(6)>;
+	};
+};
+
+/* WL1251 WLAN, the only device on this bus: its two GPIO pads ride along */
+&mcspi4 {
+	status = "okay";
+	pinctrl-0 = <&mcspi4_clk_default &mcspi4_simo_default &mcspi4_somi_default
+		     &mcspi4_cs0_default &wlan_power_default &wlan_irq_default>;
+	pinctrl-names = "default";
+
+	wlan: wifi@0 {
+		compatible = "ti,wl1251";
+		reg = <0>;
+		spi-max-frequency = <DT_FREQ_M(48)>;
+		spi-cpol;
+		spi-cpha;
+		power-gpios = <&gpio3 23 GPIO_ACTIVE_HIGH>; /* GPIO 87 */
+		irq-gpios = <&gpio2 10 GPIO_ACTIVE_HIGH>; /* GPIO 42 */
 	};
 };
 

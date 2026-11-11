@@ -11,7 +11,8 @@ A Zephyr module with everything needed to run Zephyr on the Nokia N900
   pinctrl, display controller and panel, TWL4030 (MFD, keypad, power
   button, GPIO, vibrator), BQ24150A charger, BQ27200 fuel gauge, TSC2005
   touchscreen, LIS302DL accelerometer, LP5523 and ADP1653 LED drivers,
-  MUSB USB device controller, hwinfo, McBSP I2S and TLV320AIC3x codec
+  MUSB USB device controller, hwinfo, McBSP I2S and TLV320AIC3x codec,
+  Nokia H4+ Bluetooth HCI and WL1251 Wi-Fi
 - `scripts/runners/nolo.py`: a west runner loading images over USB into
   RAM through the NOLO bootloader with `0xFFFF`
 - `apps/`: the phone demo, the camera preview, audio playback, and the

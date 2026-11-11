@@ -118,6 +118,69 @@ With the console on USB (the ``cdc-acm-console`` snippet), enable
 :kconfig:option:`CONFIG_USBD_CDC_ACM_WORKQUEUE`: the Host initializes on the system workqueue,
 which otherwise also drains the console, and logging during the initialization then blocks it.
 
+Wi-Fi
+=====
+
+The TI WL1251 802.11b/g controller on McSPI4 has the :kconfig:option:`CONFIG_WIFI_WL1251` driver.
+The chip has no firmware of its own: bringing the network interface up powers it and loads the
+firmware and the calibration data (NVS) into it, which takes about 1.6 seconds, and taking the
+interface down powers it off. The interface does not come up by itself.
+
+The two files are ``ti-connectivity/wl1251-fw.bin`` and ``ti-connectivity/wl1251-nvs.bin`` of
+`linux-firmware`_, where TI's ``LICENCE.ti-connectivity`` applies to them; Maemo has the same files
+in ``/lib/firmware``. They are not part of this repository: set
+:kconfig:option:`CONFIG_WIFI_WL1251_FIRMWARE` and :kconfig:option:`CONFIG_WIFI_WL1251_NVS` to the
+paths of copies to build them in.
+
+.. list-table::
+   :header-rows: 1
+
+   * - File
+     - Size
+     - MD5 sum
+   * - ``wl1251-fw.bin``
+     - 194180
+     - ``3a68787e5b1cb75e2a8c160ad79297ab``
+   * - ``wl1251-nvs.bin``
+     - 752
+     - ``6d570e73a9cb1f686b2ad5cdbbdf6b83``
+
+The driver scans on its own. Joining a network takes wpa_supplicant
+(:kconfig:option:`CONFIG_WIFI_NM_WPA_SUPPLICANT`), which authenticates and associates through the
+driver and sets the keys of its handshake in the chip; the chip encrypts and decrypts. WPA2 with
+CCMP is supported; WEP, TKIP, WPA3 and protected management frames are not. Open networks take
+the same path without keys, but have not been tried.
+``apps/bringup/wifi`` has the network and Wi-Fi shells and, in ``overlay-supplicant.conf``, the
+configuration that wpa_supplicant needs:
+
+.. code-block:: console
+
+   west build -b n900 -S cdc-acm-console zephyr-n900/apps/bringup/wifi -- \
+     -DEXTRA_CONF_FILE=overlay-supplicant.conf \
+     -DCONFIG_WIFI_WL1251_FIRMWARE=\"$FW/wl1251-fw.bin\" \
+     -DCONFIG_WIFI_WL1251_NVS=\"$FW/wl1251-nvs.bin\"
+
+.. code-block:: console
+
+   uart:~$ net iface up 1
+   uart:~$ wifi scan
+   uart:~$ wifi connect -s <SSID> -k 1 -p <passphrase>
+   uart:~$ net ping 192.168.1.1
+
+The NVS file has default calibration values and a placeholder MAC address. The calibration of the
+individual phone is in its CAL flash partition, which Zephyr does not read. The MAC address comes
+from the ``local-mac-address`` property of the devicetree node if it has one, and is otherwise
+derived from the OMAP die ID and marked as locally administered.
+
+The chip stays awake while the interface is up: the driver uses none of the chip's power save
+modes. The firmware's coexistence with the Bluetooth controller, which shares the antenna, is
+enabled with TI's default parameters and has not been tried with Bluetooth in use. Frames pass
+between the driver and the chip at about 1 Mbit/s, the pace of the SPI controller driver's polled
+transfers.
+
+.. _linux-firmware:
+   https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/tree/ti-connectivity
+
 Charging
 ========
 
