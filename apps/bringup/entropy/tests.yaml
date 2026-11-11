@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Silicon Laboratories Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+common:
+  build_only: true
+  platform_allow:
+    - n900
+  integration_platforms:
+    - n900
+tests:
+  n900.bringup.entropy:
+    tags: [n900, bringup]
