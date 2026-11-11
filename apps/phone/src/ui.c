@@ -13,6 +13,9 @@
 #include "kites.h"
 #include "phone.h"
 #include "sound.h"
+#include "term.h"
+
+LV_FONT_DECLARE(lv_font_adwaita_mono_14);
 
 /* Current resolution, which the rotation swaps */
 #define SCR_W    lv_display_get_horizontal_resolution(NULL)
@@ -37,6 +40,7 @@ enum app_id {
 	APP_SENSORS,
 	APP_SETTINGS,
 	APP_TORCH,
+	APP_TERMINAL,
 };
 
 enum call_state {
@@ -298,6 +302,7 @@ static const struct {
 	{APP_SENSORS, LV_SYMBOL_GPS, "Sensors", 0xD35400},
 	{APP_SETTINGS, LV_SYMBOL_SETTINGS, "Settings", 0x7F8C8D},
 	{APP_TORCH, LV_SYMBOL_EYE_OPEN, "Torch", 0xC0A000},
+	{APP_TERMINAL, ">_", "Terminal", 0x34495E},
 };
 
 static lv_obj_t *home_clock;
@@ -482,7 +487,9 @@ static void build_home(void)
 		lv_obj_t *sym = label(t, &lv_font_montserrat_48, lv_color_white(), apps[i].symbol);
 		lv_obj_t *name = label(t, &lv_font_montserrat_20, lv_color_white(), apps[i].name);
 
-		lv_obj_set_size(t, PORTRAIT ? 140 : 150, PORTRAIT ? 165 : 175);
+		/* Four to a row in landscape once there are more than six */
+		lv_obj_set_size(t, PORTRAIT ? 140 : ((ARRAY_SIZE(apps) > 6U) ? 112 : 150),
+				PORTRAIT ? 165 : 175);
 		lv_obj_set_style_bg_color(t, lv_color_hex(apps[i].color), 0);
 		lv_obj_set_style_radius(t, 22, 0);
 		lv_obj_align(sym, LV_ALIGN_CENTER, 0, -18);
@@ -1523,12 +1530,285 @@ static void build_torch(void)
 	torch_update();
 }
 
+/* ---------- terminal ---------- */
+
+/*
+ * The shell on a character grid of TERM_COLS x TERM_ROWS, with the scrollback
+ * above it. Each line is a row of labels, one for each run of a colour, so
+ * that no character needs escaping; the cursor is a block over the grid.
+ */
+#define TERM_CELL_W 8
+#define TERM_CELL_H 18
+#define TERM_PAD    4
+
+static const uint32_t term_palette[] = {
+	0xD8DEE4, /* default */
+	0x7F8C8D, /* black, which would not show */
+	0xE74C3C, 0x2ECC71, 0xF1C40F, 0x3DA5FF, 0xC678DD, 0x56B6C2, 0xFFFFFF,
+};
+
+static lv_obj_t *term_box;
+static lv_obj_t *term_cursor;
+static lv_obj_t *term_ctrl_button;
+/* Line of the first row, and the number of rows */
+static uint32_t term_first;
+static uint32_t term_rows;
+static bool term_ctrl_held;
+static bool term_ctrl_once;
+
+static lv_obj_t *term_row_create(void)
+{
+	lv_obj_t *r = lv_obj_create(term_box);
+
+	lv_obj_remove_style_all(r);
+	lv_obj_set_size(r, TERM_COLS * TERM_CELL_W, TERM_CELL_H);
+	lv_obj_set_clickable(r, false);
+	lv_obj_set_scrollable(r, false);
+	return r;
+}
+
+static void term_row_render(lv_obj_t *r, const struct term_cell *cells)
+{
+	char text[TERM_COLS + 1];
+	uint16_t len = TERM_COLS;
+	uint16_t start = 0U;
+
+	lv_obj_clean(r);
+
+	while ((len > 0U) && (cells[len - 1U].c == ' ')) {
+		len--;
+	}
+
+	while (start < len) {
+		uint8_t color = cells[start].color;
+		uint16_t n = 0U;
+		lv_obj_t *l;
+
+		while (((start + n) < len) && (cells[start + n].color == color)) {
+			text[n] = cells[start + n].c;
+			n++;
+		}
+		text[n] = '\0';
+
+		l = label(r, &lv_font_adwaita_mono_14,
+			  lv_color_hex(term_palette[MIN(color, ARRAY_SIZE(term_palette) - 1U)]),
+			  text);
+		lv_obj_set_pos(l, start * TERM_CELL_W, 0);
+		start += n;
+	}
+}
+
+static void term_scroll_bottom(void)
+{
+	lv_obj_update_layout(term_box);
+	lv_obj_scroll_to_y(term_box,
+			   lv_obj_get_scroll_y(term_box) + lv_obj_get_scroll_bottom(term_box),
+			   LV_ANIM_OFF);
+}
+
+/* Brings the rows up to date with the grid */
+static void term_refresh(void)
+{
+	struct term_view v;
+	bool follow;
+
+	(void)term_take_changed();
+	if ((st.app != APP_TERMINAL) || (term_box == NULL)) {
+		return;
+	}
+
+	/* Output scrolls the view along, unless it was scrolled back */
+	follow = lv_obj_get_scroll_bottom(term_box) <= TERM_CELL_H;
+
+	term_lock(&v);
+
+	/* The first child is the cursor */
+	while ((term_rows > 0U) && (term_first < v.first)) {
+		lv_obj_delete(lv_obj_get_child(term_box, 1));
+		term_first++;
+		term_rows--;
+	}
+	if (term_rows == 0U) {
+		term_first = v.first;
+	}
+
+	for (uint32_t line = term_first; line < v.end; line++) {
+		uint32_t i = line - term_first;
+		bool dirty = term_take_dirty(line);
+
+		if (i >= term_rows) {
+			term_row_render(term_row_create(), term_line(line));
+			term_rows++;
+		} else if (dirty) {
+			term_row_render(lv_obj_get_child(term_box, (int32_t)(1U + i)),
+					term_line(line));
+		}
+	}
+
+	lv_obj_set_pos(term_cursor, v.cursor_col * TERM_CELL_W,
+		       (int32_t)(v.cursor_line - term_first) * TERM_CELL_H);
+
+	term_unlock();
+
+	if (follow) {
+		term_scroll_bottom();
+	}
+}
+
+static void term_tick(void)
+{
+	if (term_take_changed()) {
+		term_refresh();
+	}
+}
+
+static void term_ctrl_show(void)
+{
+	lv_obj_set_style_bg_color(term_ctrl_button,
+				  (term_ctrl_once || term_ctrl_held) ? COL_ACCENT : COL_TILE, 0);
+}
+
+static void term_send(const char *data, size_t len)
+{
+	term_shell_input(data, len);
+	term_scroll_bottom();
+}
+
+/* Typed characters; Ctrl turns letters into control characters */
+static void term_char(char c)
+{
+	char out = c;
+
+	if (c == '\n') {
+		out = '\r';
+	} else if ((term_ctrl_held || term_ctrl_once) &&
+		   (((c >= '@') && (c <= '_')) || ((c >= 'a') && (c <= 'z')))) {
+		out = (char)(c & 0x1F);
+	}
+
+	if (term_ctrl_once) {
+		term_ctrl_once = false;
+		term_ctrl_show();
+	}
+
+	term_send(&out, 1);
+	if (st.key_sounds) {
+		sound_play(SOUND_CLICK);
+	}
+}
+
+/* The arrow keys go to the shell as VT100 sequences: history and cursor */
+static void term_key(uint16_t code, bool pressed)
+{
+	static const struct {
+		uint16_t code;
+		const char *seq;
+	} arrows[] = {
+		{INPUT_KEY_UP, "\x1b[A"},
+		{INPUT_KEY_DOWN, "\x1b[B"},
+		{INPUT_KEY_RIGHT, "\x1b[C"},
+		{INPUT_KEY_LEFT, "\x1b[D"},
+	};
+
+	if (code == INPUT_KEY_LEFTCTRL) {
+		term_ctrl_held = pressed;
+		term_ctrl_show();
+		return;
+	}
+
+	if (!pressed) {
+		return;
+	}
+
+	for (size_t i = 0; i < ARRAY_SIZE(arrows); i++) {
+		if (arrows[i].code == code) {
+			term_send(arrows[i].seq, strlen(arrows[i].seq));
+			return;
+		}
+	}
+}
+
+/* The touch keys send what the keyboard has no key for */
+static void term_key_cb(lv_event_t *e)
+{
+	const char *seq = lv_event_get_user_data(e);
+
+	term_send(seq, strlen(seq));
+}
+
+static void term_ctrl_cb(lv_event_t *e)
+{
+	ARG_UNUSED(e);
+
+	term_ctrl_once = !term_ctrl_once;
+	term_ctrl_show();
+}
+
+static void build_terminal(void)
+{
+	static const struct {
+		const char *text;
+		const char *seq;
+	} keys[] = {
+		{"Tab", "\t"},
+		{"^C", "\x03"},
+		{"Clear", "\x0c"},
+	};
+	int32_t box_w = TERM_COLS * TERM_CELL_W + 2 * TERM_PAD;
+	int32_t box_h = TERM_ROWS * TERM_CELL_H + 2 * TERM_PAD;
+	int32_t box_y = (SCR_H - BAR_H - box_h) / 2;
+	int32_t key_x = 8 + box_w + 8;
+	int32_t key_w = SCR_W - key_x - 8;
+	int32_t key_h = (box_h - 3 * 8) / 4;
+	lv_obj_t *b;
+
+	term_box = lv_obj_create(content);
+	lv_obj_set_size(term_box, box_w, box_h);
+	lv_obj_set_pos(term_box, 8, box_y);
+	lv_obj_set_style_bg_color(term_box, lv_color_hex(0x0B0F14), 0);
+	lv_obj_set_style_border_width(term_box, 0, 0);
+	lv_obj_set_style_radius(term_box, 6, 0);
+	lv_obj_set_style_pad_all(term_box, TERM_PAD, 0);
+	lv_obj_set_style_pad_row(term_box, 0, 0);
+	lv_obj_set_flex_flow(term_box, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_scroll_dir(term_box, LV_DIR_VER);
+	lv_obj_set_scrollbar_mode(term_box, LV_SCROLLBAR_MODE_ACTIVE);
+
+	term_cursor = lv_obj_create(term_box);
+	lv_obj_remove_style_all(term_cursor);
+	lv_obj_set_ignore_layout(term_cursor, true);
+	lv_obj_set_clickable(term_cursor, false);
+	lv_obj_set_scrollable(term_cursor, false);
+	lv_obj_set_size(term_cursor, TERM_CELL_W, TERM_CELL_H);
+	lv_obj_set_style_bg_color(term_cursor, COL_ACCENT, 0);
+	lv_obj_set_style_bg_opa(term_cursor, LV_OPA_50, 0);
+
+	for (size_t i = 0; i < ARRAY_SIZE(keys); i++) {
+		b = button(content, keys[i].text, COL_TILE, term_key_cb, (void *)keys[i].seq);
+		lv_obj_set_size(b, key_w, key_h);
+		lv_obj_set_pos(b, key_x, box_y + (int32_t)i * (key_h + 8));
+	}
+	term_ctrl_button = button(content, "Ctrl", COL_TILE, term_ctrl_cb, NULL);
+	lv_obj_set_size(term_ctrl_button, key_w, key_h);
+	lv_obj_set_pos(term_ctrl_button, key_x, box_y + 3 * (key_h + 8));
+
+	term_first = 0U;
+	term_rows = 0U;
+	term_ctrl_once = false;
+	term_ctrl_show();
+
+	app_char = term_char;
+	app_key = term_key;
+	app_tick = term_tick;
+	term_refresh();
+}
+
 /* ---------- app switching ---------- */
 
 static void open_app(enum app_id app)
 {
 	static const char *const titles[] = {"Home",	"Phone",    "Messages", "Camera",
-					     "Sensors", "Settings", "Torch"};
+					     "Sensors", "Settings", "Torch",	"Terminal"};
 
 	if ((st.app == APP_CAMERA) && (cam_timer != NULL)) {
 		camera_leave();
@@ -1564,6 +1844,9 @@ static void open_app(enum app_id app)
 		break;
 	case APP_TORCH:
 		build_torch();
+		break;
+	case APP_TERMINAL:
+		build_terminal();
 		break;
 	}
 }
@@ -1754,6 +2037,12 @@ void ui_event(const struct phone_event *e)
 		show_toast(e->value ? LV_SYMBOL_USB "  USB connected, charging"
 				    : LV_SYMBOL_USB "  USB disconnected");
 		break;
+	case PEV_TERM:
+		term_shell_ack();
+		if (st.app == APP_TERMINAL) {
+			term_refresh();
+		}
+		break;
 	default:
 		break;
 	}
@@ -1894,7 +2183,9 @@ static void rotation_update(void)
 {
 	lv_display_rotation_t want = st.rotation;
 
-	if (st.slide_open || !st.auto_rotate || (st.app == APP_CAMERA)) {
+	/* The camera and the terminal's character grid stay in landscape */
+	if (st.slide_open || !st.auto_rotate || (st.app == APP_CAMERA) ||
+	    (st.app == APP_TERMINAL)) {
 		want = LV_DISPLAY_ROTATION_0;
 	} else if (st.s.ay < -ROT_G_MIN) {
 		want = LV_DISPLAY_ROTATION_0;

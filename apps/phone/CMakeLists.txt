@@ -26,3 +26,5 @@ add_custom_command(
 add_custom_target(kites DEPENDS ${GEN_DIR}/kites.c ${GEN_DIR}/kites.h)
 add_dependencies(app kites)
 target_sources(app PRIVATE src/hw.c src/ui.c src/camera.c src/sound.c ${GEN_DIR}/kites.c)
+# The terminal: the shell backend, its character grid and its font (see gen_font.py)
+target_sources(app PRIVATE src/shell_term.c src/term.c src/font_adwaita_mono_14.c)
