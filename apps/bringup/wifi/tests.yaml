@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Silicon Laboratories Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+common:
+  build_only: true
+  platform_allow:
+    - n900
+  integration_platforms:
+    - n900
+tests:
+  n900.bringup.wifi:
+    tags: [n900, bringup]
+  n900.bringup.wifi.supplicant:
+    tags: [n900, bringup]
+    extra_args: EXTRA_CONF_FILE=overlay-supplicant.conf
