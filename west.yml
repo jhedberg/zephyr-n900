@@ -16,7 +16,8 @@ manifest:
         name-allowlist:
           - cmsis # Cortex-A core headers
           - lvgl  # the phone demo UI
-          # PSA crypto for the Bluetooth host
+          # PSA crypto for the Bluetooth host and wpa_supplicant
           - mbedtls
           - tf-psa-crypto
           - tf-psa-crypto-drivers
+          - hostap # wpa_supplicant, for joining Wi-Fi networks
