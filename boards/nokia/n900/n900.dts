@@ -21,6 +21,12 @@
 		zephyr,sram = &sdram0;
 		zephyr,display = &dispc;
 		zephyr,bt-hci = &bcm2048;
+		zephyr,entropy = &rom_rng;
+	};
+
+	/* The RNG module itself is not accessible on this high-security device */
+	rom_rng: rng {
+		compatible = "nokia,n900-rom-rng";
 	};
 
 	/* System clock of the Bluetooth controller, which switches it itself */

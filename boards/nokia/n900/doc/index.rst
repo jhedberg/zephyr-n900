@@ -181,6 +181,17 @@ transfers.
 .. _linux-firmware:
    https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/tree/ti-connectivity
 
+Random numbers
+==============
+
+The N900 is a high-security OMAP3 device, where only the secure world has access to the hardware
+random number generator. The entropy driver (:kconfig:option:`CONFIG_ENTROPY_OMAP3_ROM`) gets
+random numbers from a service of the secure ROM code instead, as Linux does, and is the board's
+``zephyr,entropy`` device: with :kconfig:option:`CONFIG_ENTROPY_GENERATOR` enabled, the random
+number APIs and PSA Crypto use it, and no application needs
+:kconfig:option:`CONFIG_TEST_RANDOM_GENERATOR`. A call into the secure world returns four bytes and
+takes about 15 microseconds, with interrupts locked.
+
 Charging
 ========
 
