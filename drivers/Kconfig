@@ -77,4 +77,8 @@ if UDC_DRIVER
 rsource "usb/udc/Kconfig.omap3_musb"
 endif
 
+if WIFI
+rsource "wifi/wl1251/Kconfig"
+endif
+
 endmenu
