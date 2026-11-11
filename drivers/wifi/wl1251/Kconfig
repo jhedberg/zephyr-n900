@@ -1,0 +1,60 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Silicon Laboratories Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+config WIFI_WL1251
+	bool "TI WL1251 802.11b/g controller"
+	default y
+	depends on DT_HAS_TI_WL1251_ENABLED
+	depends on NETWORKING
+	select SPI
+	select GPIO
+	select CRC
+	select NET_L2_ETHERNET
+	select NET_L2_WIFI_MGMT
+	select WIFI_USE_NATIVE_NETWORKING
+	help
+	  Driver for the TI WL1251 Wi-Fi controller on SPI, as in the
+	  Nokia N900. The chip is powered and its firmware loaded when the
+	  network interface is brought up. It scans on its own; joining a
+	  network takes wpa_supplicant (WIFI_NM_WPA_SUPPLICANT). Of the
+	  security modes, WPA2 with CCMP is supported.
+
+if WIFI_WL1251
+
+config WIFI_WL1251_FIRMWARE
+	string "Firmware image"
+	help
+	  Absolute path to the firmware that is loaded into the chip:
+	  ti-connectivity/wl1251-fw.bin of linux-firmware, under TI's
+	  license there. It is not part of this repository. Without it and
+	  the calibration data the driver builds but cannot start the chip.
+
+config WIFI_WL1251_NVS
+	string "Calibration data"
+	help
+	  Absolute path to the calibration data (NVS) that is loaded into the
+	  chip along with the firmware: ti-connectivity/wl1251-nvs.bin of
+	  linux-firmware, which holds default values.
+
+config WIFI_WL1251_MAX_BSS
+	int "Networks kept from a scan"
+	default 24
+	range 1 64
+
+config WIFI_WL1251_BSS_IES_SIZE
+	int "Size of the information elements kept for each network"
+	default 384
+	range 64 1024
+	help
+	  What does not fit is cut off. The security settings of a network
+	  are among its first elements.
+
+config WIFI_WL1251_STACK_SIZE
+	int "Stack size of the driver thread"
+	default 2048
+
+config WIFI_WL1251_THREAD_PRIO
+	int "Cooperative priority of the driver thread"
+	default 6
+
+endif # WIFI_WL1251

@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Silicon Laboratories Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  TI WL1251 802.11b/g controller on SPI.
+
+  The chip speaks TI's WSPI in SPI mode 3 with 32-bit words, so the node
+  needs spi-cpol and spi-cpha.
+
+compatible: "ti,wl1251"
+
+include: [spi-device.yaml, ethernet-controller.yaml]
+
+properties:
+  power-gpios:
+    type: phandle-array
+    required: true
+    description: Enables the chip's power while active.
+
+  irq-gpios:
+    type: phandle-array
+    required: true
+    description: Interrupt line, with a rising edge for a new interrupt.
