@@ -10,6 +10,7 @@ enum phone_event_type {
 	PEV_SWITCH, /* code, value: INPUT_SW_* */
 	PEV_TAP,    /* accelerometer tap */
 	PEV_USB,    /* value: VBUS present */
+	PEV_TERM,   /* the terminal has new output */
 };
 
 struct phone_event {

@@ -47,6 +47,14 @@ The phone and camera apps generate the camera sensor register tables at
 build time from a local Linux tree (`-DLINUX_DIR=...`, default `~/linux`);
 those tables are GPL-2.0 and are not part of this repository.
 
+The phone demo's Terminal app runs the Zephyr shell on the screen, in
+88 x 23 characters with the log in between, and stays in landscape. The
+arrow keys browse the history and move the cursor, the Sym/Ctrl key makes
+control characters (Ctrl+I is Tab), and touch keys give Tab, Ctrl-C, Clear
+and a one-shot Ctrl. Its font is Adwaita Mono, converted by
+`apps/phone/gen_font.py`; it is under the SIL Open Font License 1.1, whose
+text is in the font's source file.
+
 `west flash` needs `0xFFFF` and the phone in NOLO's USB mode;
 `scripts/autoload.sh` waits for NOLO and loads an image whenever the phone
 reboots.

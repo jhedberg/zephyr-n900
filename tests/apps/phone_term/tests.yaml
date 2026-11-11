@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Silicon Laboratories Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+common:
+  tags: [n900, apps]
+  platform_allow:
+    - native_sim
+  integration_platforms:
+    - native_sim
+tests:
+  n900.apps.phone.term: {}
